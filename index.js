@@ -156,10 +156,7 @@ async function run() {
                 $inc: { job_applicants_number: 1 } // Increment by 1
               })
             // const query = { _id: new ObjectId(id) }
-            // const updateDoc = {
-            //     $set: jobInfo
-            // }
-            // const result = await jobCOllection.updateOne(query, updateDoc)
+            
             res.send(result)
         })
 
