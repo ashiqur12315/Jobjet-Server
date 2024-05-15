@@ -116,9 +116,7 @@ async function run() {
               }
             //   else{
             //     const result = await jobCOllection.find({ employer_email: email }).toArray()
-            //     res.status(200).json(result)
-            // // res.send(result)
-            //   }
+            
             
             const result = await jobCOllection.find({ employer_email: email }).toArray()
             res.send(result)
@@ -149,8 +147,7 @@ async function run() {
         //update a job count of job applicants
         app.patch('/job-count/:id', async (req, res) => {
             const id = req.params.id;
-            // const jobInfo = req.body;
-            // console.log(id, jobInfo)
+            
 
             const result = await jobCOllection.updateOne({ _id: new ObjectId(id) }, {
                 $inc: { job_applicants_number: 1 } // Increment by 1
