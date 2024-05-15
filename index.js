@@ -15,7 +15,7 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser())
 
-// Our middleware
+// Our middleware and verify token
 
 const verifyToken = async(req, res, next)=>{
   const token = req.cookies?.token;
