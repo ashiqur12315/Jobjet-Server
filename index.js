@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const SSLCommerzPayment = require('sslcommerz-lts')
 const jwt = require('jsonwebtoken')
 const cookieParser = require('cookie-parser')
 const app = express();
@@ -17,20 +18,20 @@ app.use(cookieParser())
 
 // Our middleware and verify token
 
-const verifyToken = async(req, res, next)=>{
-  const token = req.cookies?.token;
-  
-  if(!token){
-    return res.status(401).send({message: 'unauthorized access'})
-  }
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded)=>{
-    if(err){
-      return res.status(401).send({message: 'unauthorized access'})
+const verifyToken = async (req, res, next) => {
+    const token = req.cookies?.token;
+
+    if (!token) {
+        return res.status(401).send({ message: 'unauthorized access' })
     }
-    req.user = decoded
-    console.log(decoded)
-    next()
-  })
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+            return res.status(401).send({ message: 'unauthorized access' })
+        }
+        req.user = decoded
+        console.log(decoded)
+        next()
+    })
 
 }
 
@@ -48,39 +49,118 @@ const client = new MongoClient(uri, {
     }
 });
 
+const store_id = process.env.STORE_ID;
+const store_passwd = process.env.STORE_PASS;
+const is_live = false //true for live, false for sandbox
+
 const cookieOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-  };
+};
 
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
         // await client.connect();
 
-        
+
 
 
         // auth related api
-        app.post('/jwt', async(req, res)=>{
-          const user = req.body;
-          console.log('user for token', user)
+        app.post('/jwt', async (req, res) => {
+            const user = req.body;
+            console.log('user for token', user)
 
-          const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {expiresIn: '10h'})
+            const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '10h' })
 
-          res
-          .cookie('token', token, cookieOptions)
-          .send({success: true})
+            res
+                .cookie('token', token, cookieOptions)
+                .send({ success: true })
         })
 
         // clear cookie 
-        app.post('/logout', async(req, res)=>{
+        app.post('/logout', async (req, res) => {
             res
-            .clearCookie('token', {...cookieOptions, maxAge: 0,
-          })
-          .send({success: true})
+                .clearCookie('token', {
+                    ...cookieOptions, maxAge: 0,
+                })
+                .send({ success: true })
         })
+
+
+
+        //___________PAYMENT RELATED API________________//
+
+        const tran_id = new ObjectId().toString();
+
+        app.post('/pay', async (req, res) => {
+            const jobDetails = req.body;
+            const data = {
+                total_amount: 100,
+                currency: 'BDT',
+                tran_id: tran_id, // use unique tran_id for each api call
+                success_url: `https://jobjet-server.vercel.app/payment/success/${tran_id}`,
+                fail_url: `https://jobjet-server.vercel.app/payment/fail/${tran_id}`,
+                cancel_url: 'http://localhost:3030/cancel',
+                ipn_url: 'http://localhost:3030/ipn',
+                shipping_method: 'Courier',
+                product_name: 'Computer.',
+                product_category: 'Electronic',
+                product_profile: 'general',
+                cus_name: 'Customer Name',
+                cus_email: 'customer@example.com',
+                cus_add1: 'Dhaka',
+                cus_add2: 'Dhaka',
+                cus_city: 'Dhaka',
+                cus_state: 'Dhaka',
+                cus_postcode: '1000',
+                cus_country: 'Bangladesh',
+                cus_phone: '01711111111',
+                cus_fax: '01711111111',
+                ship_name: 'Customer Name',
+                ship_add1: 'Dhaka',
+                ship_add2: 'Dhaka',
+                ship_city: 'Dhaka',
+                ship_state: 'Dhaka',
+                ship_postcode: 1000,
+                ship_country: 'Bangladesh',
+            };
+            console.log(data)
+            const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live)
+            sslcz.init(data).then(apiResponse => {
+                // Redirect the user to payment gateway
+                let GatewayPageURL = apiResponse.GatewayPageURL
+                res.send({ url: GatewayPageURL });
+
+                const finalJobDetails = { ...jobDetails, paidStatus: false, transactionId: tran_id }
+                console.log(finalJobDetails)
+                const result = jobCOllection.insertOne(finalJobDetails)
+
+                console.log('Redirecting to: ', GatewayPageURL)
+            });
+            app.post("/payment/success/:tranId", async (req, res) => {
+                console.log(req.params.tranId)
+                const result =await jobCOllection.updateOne({transactionId:req.params.tranId},
+                    {
+                        $set: {
+                            paidStatus: true
+                        }
+                    }
+                )
+                if (result.modifiedCount>0){
+                    res.redirect(`https://a-11-job-marketplace.web.app/payment/success/${req.params.tranId}`)
+                }
+            })
+            app.post("/payment/fail/:tranId", async (req, res)=>{
+                const result = await jobCOllection.deleteOne({transactionId: req.params.tranId })
+                if(result.deletedCount){
+                    res.redirect(`https://a-11-job-marketplace.web.app/payment/fail/${req.params.tranId}`)
+                }
+            })
+        })
+
+        //////////////////////////////////////////////////////////////////////////////////////////
 
         // /////////////////////Job MArketplace/////////////////////////////////////////////////////////////////////
         const jobCOllection = client.db('JobWorkplace').collection('allJob')
@@ -108,16 +188,16 @@ async function run() {
         })
 
         //my jobs
-        app.get('/my-jobs/:email',verifyToken, async (req, res) => {
+        app.get('/my-jobs/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             // console.log(typeof email,typeof req.user.email)
-            if(req.user.email !== req.params.email){
-                return res.status(403).json({message: 'forbidden access'})
-              }
+            if (req.user.email !== req.params.email) {
+                return res.status(403).json({ message: 'forbidden access' })
+            }
             //   else{
             //     const result = await jobCOllection.find({ employer_email: email }).toArray()
-            
-            
+
+
             const result = await jobCOllection.find({ employer_email: email }).toArray()
             res.send(result)
         })
@@ -130,7 +210,7 @@ async function run() {
         })
 
         //update a job
-        
+
         app.patch('/update/:id', async (req, res) => {
             const id = req.params.id;
             const jobInfo = req.body;
@@ -147,13 +227,13 @@ async function run() {
         //update a job count of job applicants
         app.patch('/job-count/:id', async (req, res) => {
             const id = req.params.id;
-            
+
 
             const result = await jobCOllection.updateOne({ _id: new ObjectId(id) }, {
                 $inc: { job_applicants_number: 1 } // Increment by 1
-              })
+            })
             // const query = { _id: new ObjectId(id) }
-            
+
             res.send(result)
         })
 
@@ -167,20 +247,20 @@ async function run() {
         })
 
         // get all applied jobs data 
-        app.get('/appliedJobs/:email',verifyToken, async (req, res) => {
+        app.get('/appliedJobs/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            if(req.user.email !== req.params.email){
-                return res.status(403).json({message: 'forbidden access'})
-              }
+            if (req.user.email !== req.params.email) {
+                return res.status(403).json({ message: 'forbidden access' })
+            }
             const result = await appliedJobCOllection.find({ applicant_email: email }).toArray()
             // console.log(result)
             res.send(result)
         })
 
         //search job
-        app.get('/search-job', async(req, res)=>{
+        app.get('/search-job', async (req, res) => {
             const search = req.query.search;
-            let query = { job_title: {$regex: search, $options: 'i'}}
+            let query = { job_title: { $regex: search, $options: 'i' } }
             const result = await jobCOllection.find(query).toArray()
             res.send(result)
         })
@@ -193,14 +273,14 @@ async function run() {
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-        
+
 
         // app.post('/logout', async(req, res)=>{
         //   const user = req.body;
         //   console.log('logging out', user)
-   
 
-       
+
+
 
 
 
